@@ -1,6 +1,42 @@
 /* ------------------------------------------------------------------------
    style.css — design tokens + layout, hand-written (no Tailwind/build step)
    ------------------------------------------------------------------------ */
+/* FRONT PAGE */
+#frontPage {
+    text-align: center;
+    margin-top: 40px;
+}
+
+/* APP TITLE ANIMATION */
+#appTitle {
+    font-size: 32px;
+    font-weight: bold;
+    margin-bottom: 20px;
+    animation: fadeIn 2s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* LOGIN PAGE */
+#loginPage {
+    display: none;
+    text-align: center;
+    margin-top: 40px;
+}
+
+#loginPage input {
+    padding: 10px;
+    width: 200px;
+    margin-bottom: 10px;
+}
+
+#loginPage button {
+    padding: 10px 20px;
+    font-size: 16px;
+}
 
 :root {
   --cream: #F8F6F1;
