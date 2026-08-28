@@ -1,25 +1,14 @@
 /* ==========================================================================
-   SmallBizBoost RI — script.js
+   SmallBizBoost RI — script.js (rewritten)
    Plain vanilla JavaScript. No frameworks, no external libraries.
-   Sections below, in load order:
-     1. Static/curated data (counties, resources directory, business types)
-     2. Live data fetching (Census ACS, Census CBP, BLS LAUS) + fallback
-     3. Chart rendering (hand-written Canvas 2D — no charting library)
-     4. App state, rendering, and event wiring
    ========================================================================== */
 
 /* ------------------------------------------------------------------------
-   data.js
-   Static / curated data: county metadata, the resources directory, business
-   types, and a FALLBACK economic dataset used only if the live Census/BLS
-   fetch fails (offline, rate-limited, CORS issue, etc). Everything under
-   FALLBACK_ECONOMIC_DATA is clearly labeled as such in the UI when it's
-   the data actually being shown.
+   data.js — static / curated data
    ------------------------------------------------------------------------ */
 
 const STATE_FIPS = "44"; // Rhode Island
 
-// County id -> 3-digit county FIPS code (used to build Census/BLS queries)
 const COUNTY_FIPS = {
   bristol: "001",
   kent: "003",
@@ -54,8 +43,6 @@ const BUSINESS_TYPES = [
   { id: "health", name: "Health & wellness", multiplier: 1.1 },
 ];
 
-// Metrics available on the County Snapshot page. `key` must match a field
-// produced by api.js (see buildCountyRecord).
 const METRICS = [
   { id: "income", label: "Median household income", fmt: (v) => `$${Math.round(v).toLocaleString()}` },
   { id: "growth", label: "5-year income growth (%)", fmt: (v) => `${v.toFixed(1)}%` },
@@ -66,9 +53,6 @@ const METRICS = [
   { id: "population", label: "Population", fmt: (v) => Math.round(v).toLocaleString() },
 ];
 
-// Curated resources directory — no open public API exists for this, so it
-// stays hand-maintained. County/contact info is illustrative placeholder
-// data; replace with verified listings before relying on it.
 const RESOURCES = [
   { tag: "SBA Counseling", name: "Rhode Island Small Business Development Center (RISBDC)", desc: "Free one-on-one business counseling, formation guidance and financial projection review.", addr: "URI Providence Campus, 80 Washington St, Providence", phone: "(401) 874-7232", county: "providence" },
   { tag: "SBA Counseling", name: "SBA Rhode Island District Office", desc: "Loan program guidance (7(a), 504, microloan) and lender matchmaking.", addr: "380 Westminster St, Providence", phone: "(401) 528-4561", county: "providence" },
@@ -91,48 +75,16 @@ function resourceCountForCounty(countyId) {
   return RESOURCES.filter((r) => r.county === "all" || r.county === countyId).length;
 }
 
-
 /* ------------------------------------------------------------------------
-   api.js
-   Fetches real public data at page load:
-     - Median household income + population  -> Census ACS 5-Year API
-     - 5-year income growth                   -> Census ACS 5-Year API (prior vintage)
-     - Self-employed share                    -> Census ACS 5-Year Data Profile
-     - Median earnings (-> est. weekly wage)  -> Census ACS 5-Year API
-     - Business establishments                -> Census County Business Patterns API
-     - Unemployment rate                      -> BLS LAUS API
-
-   *** CENSUS_API_KEY IS REQUIRED, NOT OPTIONAL ***
-   In practice, Census now appears to redirect (302) unauthenticated data
-   queries rather than serve them directly, and that redirect response
-   doesn't carry CORS headers — so the browser reports it as a blocked
-   cross-origin request. Get a free key (instant, just an email address)
-   at https://api.census.gov/data/key_signup.html and paste it into
-   CENSUS_API_KEY below. Without it, every Census call here will fail and
-   the site will run entirely on the cached fallback snapshot in data.js.
-
-   BLS's LAUS API does not require a key for this volume of requests.
-
-   If ANY individual call fails (offline, CORS, rate limit, changed vintage
-   year, etc.) that specific metric silently falls back to the static
-   snapshot in data.js and gets flagged so the UI can show "cached data".
+   api.js — live data fetching
    ------------------------------------------------------------------------ */
 
-const CENSUS_API_KEY = "47d157768272a26f195d448b5913630c15f1531f"; // REQUIRED — paste your free key from https://api.census.gov/data/key_signup.html
+const CENSUS_API_KEY = "47d157768272a26f195d448b5913630c15f1531f"; // your key
 
-const ACS_YEAR = 2023; // ACS 5-year vintage (2019-2023 estimates) — confirmed reachable
-const ACS_PRIOR_YEAR = ACS_YEAR - 5; // for 5-year growth comparison
-const CBP_YEAR = 2023; // County Business Patterns vintage — confirmed reachable
-
+const ACS_YEAR = 2023;
+const ACS_PRIOR_YEAR = ACS_YEAR - 5;
+const CBP_YEAR = 2023;
 const FETCH_TIMEOUT_MS = 9000;
-
-if (!CENSUS_API_KEY) {
-  console.warn(
-    "[SmallBizBoost RI] No CENSUS_API_KEY set — Census requests will likely fail. " +
-    "Get a free key at https://api.census.gov/data/key_signup.html and paste it " +
-    "into the CENSUS_API_KEY constant near the top of script.js."
-  );
-}
 
 function withKey(url) {
   return CENSUS_API_KEY ? `${url}&key=${CENSUS_API_KEY}` : url;
@@ -150,13 +102,11 @@ async function fetchJson(url) {
   }
 }
 
-// Census API responses are arrays-of-arrays: [ [headers...], [row...], ... ]
-// This turns them into { countyFips: value }
 function indexByCountyFips(rows, valueColIndex) {
   const out = {};
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
-    const countyFips = row[row.length - 1]; // "county" column is always last
+    const countyFips = row[row.length - 1];
     out[countyFips] = Number(row[valueColIndex]);
   }
   return out;
@@ -182,8 +132,6 @@ async function fetchPriorIncome(year) {
 }
 
 async function fetchSelfEmployedShare(year) {
-  // DP03_0026PE: percent of civilian employed pop. 16+ that is self-employed
-  // in their own not-incorporated business, ACS Data Profile table.
   const url = withKey(
     `https://api.census.gov/data/${year}/acs/acs5/profile?get=DP03_0026PE&for=county:*&in=state:${STATE_FIPS}`
   );
@@ -192,9 +140,6 @@ async function fetchSelfEmployedShare(year) {
 }
 
 async function fetchMedianEarnings(year) {
-  // B20002_001E: median earnings in the past 12 months for workers 16+ with earnings.
-  // We divide by 52 as a rough proxy for average weekly wage (NOT the same
-  // methodology as BLS QCEW, which needs a registered key + industry series).
   const url = withKey(
     `https://api.census.gov/data/${year}/acs/acs5?get=B20002_001E&for=county:*&in=state:${STATE_FIPS}`
   );
@@ -210,28 +155,15 @@ async function fetchEstablishments(year) {
   return indexByCountyFips(rows, 0);
 }
 
-// BLS LAUS county unemployment rate, latest available month.
-// Series ID format: LAUCN + state FIPS(2) + county FIPS(3) + "0000000003"
-// NOTE: the "?latest=true" query parameter is only reliably honored for
-// registered/keyed v2 requests. Unregistered GET requests should hit the
-// bare endpoint instead — BLS returns periods in reverse chronological
-// order, so data[0] is the most recent value.
 async function fetchUnemploymentRate(countyFips) {
   const seriesId = `LAUCN${STATE_FIPS}${countyFips}0000000003`;
   const url = `https://api.bls.gov/publicAPI/v2/timeseries/data/${seriesId}`;
   const json = await fetchJson(url);
   const series = json?.Results?.series?.[0]?.data?.[0];
-  if (!series) throw new Error(`No BLS data for ${seriesId} (status: ${json?.status}, message: ${json?.message?.join?.("; ")})`);
+  if (!series) throw new Error(`No BLS data for ${seriesId}`);
   return Number(series.value);
 }
 
-/**
- * Fetches everything and returns:
- *   { records: { [countyId]: {income, priorIncome, growth, population,
- *                              establishments, selfEmployed, wage, unemployment} },
- *     sources: { [countyId]: { [field]: 'live' | 'fallback' } },
- *     allLive: boolean }
- */
 async function fetchAllEconomicData() {
   const countyIds = Object.keys(COUNTY_FIPS);
   const records = {};
@@ -264,8 +196,6 @@ async function fetchAllEconomicData() {
       if (Number.isFinite(income)) { records[id].income = income; sources[id].income = "live"; }
       if (Number.isFinite(population)) { records[id].population = population; sources[id].population = "live"; }
     });
-  } else {
-    console.warn("Census income/population fetch failed:", incomePopRes.reason);
   }
 
   if (priorIncomeRes.status === "fulfilled") {
@@ -273,8 +203,6 @@ async function fetchAllEconomicData() {
       const v = priorIncomeRes.value[COUNTY_FIPS[id]];
       if (Number.isFinite(v)) { records[id].priorIncome = v; sources[id].priorIncome = "live"; }
     });
-  } else {
-    console.warn("Census prior-income fetch failed:", priorIncomeRes.reason);
   }
 
   if (selfEmpRes.status === "fulfilled") {
@@ -282,8 +210,6 @@ async function fetchAllEconomicData() {
       const v = selfEmpRes.value[COUNTY_FIPS[id]];
       if (Number.isFinite(v)) { records[id].selfEmployed = v; sources[id].selfEmployed = "live"; }
     });
-  } else {
-    console.warn("Census self-employed fetch failed:", selfEmpRes.reason);
   }
 
   if (earningsRes.status === "fulfilled") {
@@ -291,8 +217,6 @@ async function fetchAllEconomicData() {
       const v = earningsRes.value[COUNTY_FIPS[id]];
       if (Number.isFinite(v)) { records[id].wage = v / 52; sources[id].wage = "live"; }
     });
-  } else {
-    console.warn("Census earnings fetch failed:", earningsRes.reason);
   }
 
   if (estabRes.status === "fulfilled") {
@@ -300,8 +224,6 @@ async function fetchAllEconomicData() {
       const v = estabRes.value[COUNTY_FIPS[id]];
       if (Number.isFinite(v)) { records[id].establishments = v; sources[id].establishments = "live"; }
     });
-  } else {
-    console.warn("Census CBP establishments fetch failed:", estabRes.reason);
   }
 
   unemploymentRes.forEach((r, i) => {
@@ -309,16 +231,18 @@ async function fetchAllEconomicData() {
     if (r.status === "fulfilled" && Number.isFinite(r.value)) {
       records[id].unemployment = r.value;
       sources[id].unemployment = "live";
-    } else {
-      console.warn(`BLS unemployment fetch failed for ${id}:`, r.reason);
     }
   });
 
-  // Growth is always derived locally from income + priorIncome
   countyIds.forEach((id) => {
     const { income, priorIncome } = records[id];
-    records[id].growth = priorIncome ? ((income - priorIncome) / priorIncome) * 100 : 0;
-    sources[id].growth = sources[id].income === "live" && sources[id].priorIncome === "live" ? "live" : "fallback";
+    if (Number.isFinite(income) && Number.isFinite(priorIncome) && priorIncome !== 0) {
+      records[id].growth = ((income - priorIncome) / priorIncome) * 100;
+      sources[id].growth = (sources[id].income === "live" && sources[id].priorIncome === "live") ? "live" : "fallback";
+    } else {
+      records[id].growth = 0;
+      sources[id].growth = "fallback";
+    }
   });
 
   const allLive = countyIds.every((id) =>
@@ -328,11 +252,8 @@ async function fetchAllEconomicData() {
   return { records, sources, allLive };
 }
 
-
 /* ------------------------------------------------------------------------
-   Chart rendering — pure vanilla JS using the Canvas 2D API.
-   No external charting library. Two charts: a county comparison bar chart
-   and a 5-axis radar chart for the score breakdown.
+   chart rendering — Canvas 2D
    ------------------------------------------------------------------------ */
 
 const CHART_COLORS = {
@@ -343,9 +264,6 @@ const CHART_COLORS = {
   navy: "#11212C",
 };
 
-// Sets up a canvas's backing resolution to match its CSS size * devicePixelRatio,
-// so drawing stays crisp on high-DPI screens. Returns the CSS-pixel {width,height}
-// to draw with (the context is pre-scaled, so drawing code just uses CSS pixels).
 function prepareCanvas(canvas) {
   const rect = canvas.getBoundingClientRect();
   const width = Math.max(rect.width, 1);
@@ -376,16 +294,9 @@ function drawRoundedTopRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-/**
- * Draws a simple vertical bar chart onto `canvas`.
- * @param {HTMLCanvasElement} canvas
- * @param {string[]} labels
- * @param {number[]} values
- * @param {string} leaderLabel - label to highlight in green
- */
 function renderCountyBarChart(canvas, labels, values, leaderLabel) {
   const rect = canvas.getBoundingClientRect();
-  if (rect.width < 10 || rect.height < 10) return; // not visible yet, skip
+  if (rect.width < 10 || rect.height < 10) return;
 
   const { ctx, width, height } = prepareCanvas(canvas);
   const padding = { top: 16, right: 12, bottom: 28, left: 52 };
@@ -398,7 +309,6 @@ function renderCountyBarChart(canvas, labels, values, leaderLabel) {
   ctx.fillStyle = CHART_COLORS.muted;
   ctx.lineWidth = 1;
 
-  // gridlines + y-axis labels
   const ticks = 5;
   for (let i = 0; i <= ticks; i++) {
     const v = (maxVal / ticks) * i;
@@ -412,7 +322,6 @@ function renderCountyBarChart(canvas, labels, values, leaderLabel) {
     ctx.fillText(formatShortNumber(v), padding.left - 10, y);
   }
 
-  // bars
   const gap = 20;
   const barWidth = (chartW - gap * (values.length - 1)) / values.length;
   values.forEach((v, i) => {
@@ -430,14 +339,9 @@ function renderCountyBarChart(canvas, labels, values, leaderLabel) {
   });
 }
 
-/**
- * Draws a 5-axis radar/spider chart of the score breakdown onto `canvas`.
- * @param {HTMLCanvasElement} canvas
- * @param {{household:number, labor:number, market:number, institutional:number, stability:number}} score
- */
 function renderScoreRadarChart(canvas, score) {
   const rect = canvas.getBoundingClientRect();
-  if (rect.width < 10 || rect.height < 10) return; // not visible yet, skip
+  if (rect.width < 10 || rect.height < 10) return;
 
   const { ctx, width, height } = prepareCanvas(canvas);
   const cx = width / 2;
@@ -456,7 +360,6 @@ function renderScoreRadarChart(canvas, score) {
   const startAngle = -Math.PI / 2;
   const angleFor = (i) => startAngle + i * angleStep;
 
-  // grid rings
   ctx.strokeStyle = CHART_COLORS.line;
   ctx.lineWidth = 1;
   const rings = 4;
@@ -473,7 +376,6 @@ function renderScoreRadarChart(canvas, score) {
     ctx.stroke();
   }
 
-  // spokes + labels
   ctx.font = "11px Inter, sans-serif";
   ctx.fillStyle = CHART_COLORS.muted;
   axes.forEach((ax, i) => {
@@ -492,7 +394,6 @@ function renderScoreRadarChart(canvas, score) {
     ctx.fillText(ax.label, lx, ly);
   });
 
-  // data polygon
   ctx.beginPath();
   axes.forEach((ax, i) => {
     const a = angleFor(i);
@@ -509,7 +410,6 @@ function renderScoreRadarChart(canvas, score) {
   ctx.fill();
   ctx.stroke();
 
-  // data points
   ctx.fillStyle = CHART_COLORS.teal;
   axes.forEach((ax, i) => {
     const a = angleFor(i);
@@ -522,10 +422,8 @@ function renderScoreRadarChart(canvas, score) {
   });
 }
 
-
 /* ------------------------------------------------------------------------
-   app.js — application state, rendering, and event wiring.
-   No framework, no build step: plain DOM APIs.
+   app.js — state, scoring, rendering
    ------------------------------------------------------------------------ */
 
 const state = {
@@ -537,65 +435,86 @@ const state = {
   metric: "income",
   filterCounty: "all",
   filterType: "Every type",
-  economicData: null, // filled after fetchAllEconomicData() resolves
+  economicData: null,
   dataSources: null,
-  dataStatus: "loading", // 'loading' | 'live' | 'partial' | 'fallback'
+  dataStatus: "loading",
 };
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
 function getCounty(id) {
   const meta = COUNTIES_META.find((c) => c.id === id);
-  const econ = state.economicData[id];
+  const econ = (state.economicData || FALLBACK_ECONOMIC_DATA)[id] || {};
   return { ...meta, ...econ };
 }
 
-function computeScore(county, businessType, employees, rent, annualRent, annualPayroll) {
-  // --- Improved Income Normalization (Min-Max) ---
-const allIncomes = Object.values(state.economicData).map(c => c.income);
-const minIncome = Math.min(...allIncomes);
-const maxIncome = Math.max(...allIncomes);
+function computeScore(county, businessType, employees, rent) {
+  const effectiveHeadcount = Math.max(employees, 1);
+  const annualRent = Math.max(rent, 0) * 12;
+  const baseWage = Number.isFinite(county.wage) ? county.wage : 1100;
+  const annualPayroll = Math.round(baseWage * effectiveHeadcount * 52 * (businessType.multiplier || 1));
 
-// Income normalized 0–100
-const incomeScore = ((county.income - minIncome) / (maxIncome - minIncome)) * 100;
+  const allIncomes = Object.values(state.economicData || FALLBACK_ECONOMIC_DATA)
+    .map((c) => c.income)
+    .filter((v) => Number.isFinite(v));
+  let incomeScore = 50;
+  if (allIncomes.length >= 2) {
+    const minIncome = Math.min(...allIncomes);
+    const maxIncome = Math.max(...allIncomes);
+    if (Number.isFinite(county.income) && maxIncome > minIncome) {
+      incomeScore = ((county.income - minIncome) / (maxIncome - minIncome)) * 100;
+    }
+  }
 
-// Growth normalized 0–100
-const growthScore = clamp((county.growth + 5) / 20 * 100, 0, 100);
+  let growthScore = 50;
+  if (Number.isFinite(county.growth)) {
+    growthScore = clamp(((county.growth + 5) / 20) * 100, 0, 100);
+  }
 
-// Blend income + growth
-const household = Math.round(incomeScore * 0.75 + growthScore * 0.25);
+  const household = Math.round(incomeScore * 0.75 + growthScore * 0.25);
 
-
-  // Labor cost headroom blends two things:
-  //  (1) marketFit — the county/business-type wage environment (unchanged by your plan)
-  //  (2) planFit — how efficiently YOUR staffing + rent plan uses that environment,
-  //      via rent-per-employee and headcount relative to a lean 2-person baseline.
-  // Blending them means the score always visibly responds to the plan inputs,
-  // instead of being swamped by the market component.
-  const wagePressure = (county.wage - 1000) / 3.2;
+  const wagePressure = (baseWage - 1000) / 3.2;
   const businessTypePressure = (businessType.multiplier - 1) * 55;
   const marketFit = clamp(100 - wagePressure - businessTypePressure, 0, 100);
 
-  const effectiveHeadcount = Math.max(employees, 1);
   const rentPerHead = annualRent / effectiveHeadcount;
-  const occupancyPressure = clamp((rentPerHead - 9000) / 300, -20, 60);
-  const staffingPressure = clamp(Math.pow(employees - 2, 1.3) * 5, -10, 45);
-  const planFit = clamp(100 - occupancyPressure - staffingPressure, 0, 100);
+  const occBase = (rentPerHead - 8000) / 250;
+  let occRaw = Math.pow(Math.abs(occBase), 1.25) * (occBase < 0 ? -1 : 1) - 10;
+  const occupancyPressure = clamp(occRaw, -10, 55);
 
+  const staffingBase = employees - 2;
+  let staffRaw = Math.pow(Math.abs(staffingBase), 1.3) * (staffingBase > 0 ? 1 : -1) * 5;
+  const staffingPressure = clamp(staffRaw, -10, 45);
+
+  const planFit = clamp(100 - occupancyPressure - staffingPressure, 0, 100);
   const labor = Math.round(marketFit * 0.55 + planFit * 0.45);
 
   const market = clamp((county.establishments / 13000) * 100, 0, 100);
   const resources = resourceCountForCounty(county.id);
   const institutional = clamp((resources / 8) * 100, 0, 100);
-  const stability = clamp(100 - county.unemployment * 15, 0, 100);
+  const unemployment = Number.isFinite(county.unemployment) ? county.unemployment : 4;
+  const stability = clamp(100 - unemployment * 15, 0, 100);
+
   const weights = { household: 0.28, labor: 0.22, market: 0.18, institutional: 0.2, stability: 0.12 };
   const overall = Math.round(
-    household * weights.household + labor * weights.labor + market * weights.market +
-    institutional * weights.institutional + stability * weights.stability
+    household * weights.household +
+    labor * weights.labor +
+    market * weights.market +
+    institutional * weights.institutional +
+    stability * weights.stability
   );
+
   return {
-    household: Math.round(household), labor: clamp(labor, 0, 100), market: Math.round(market),
-    institutional: Math.round(institutional), stability: Math.round(stability), overall, resources,
+    household: clamp(Math.round(household), 0, 100),
+    labor: clamp(Math.round(labor), 0, 100),
+    market: clamp(Math.round(market), 0, 100),
+    institutional: clamp(Math.round(institutional), 0, 100),
+    stability: clamp(Math.round(stability), 0, 100),
+    overall: clamp(overall, 0, 100),
+    resources,
+    annualRent,
+    annualPayroll,
+    costFloor: annualRent + annualPayroll + 18000,
   };
 }
 
@@ -639,185 +558,188 @@ function fillSelect(selectEl, options, value) {
   selectEl.value = value;
 }
 
-
 function renderHome() {
+  const countySelect = $("#county-select");
+  const businessSelect = $("#business-select");
+  if (!countySelect || !businessSelect) return;
+
+  if (!state.economicData) {
+    $("#score-number") && ($("#score-number").textContent = "--");
+    $("#score-eyebrow") && ($("#score-eyebrow").textContent = "Loading live data…");
+    return;
+  }
+
   const county = getCounty(state.countyId);
-  const bt = BUSINESS_TYPES.find((b) => b.id === state.businessId);
-  const annualPayroll = Math.round(county.wage * state.employees * 52 * bt.multiplier);
-  const annualRent = state.rent * 12;
-  const costFloor = annualPayroll + annualRent + 18000;
-  const score = computeScore(county, bt, state.employees, state.rent, annualRent, annualPayroll);
+  const bt = BUSINESS_TYPES.find((b) => b.id === state.businessId) || BUSINESS_TYPES[0];
+
+  const score = computeScore(county, bt, state.employees, state.rent);
   const v = verdict(score.overall);
 
-  $("#county-select").value = state.countyId;
-  $("#business-select").value = state.businessId;
+  countySelect.value = state.countyId;
+  businessSelect.value = state.businessId;
   $("#rent-slider").value = state.rent;
   $("#rent-value").textContent = `$${state.rent.toLocaleString()}`;
   $("#employees-slider").value = state.employees;
   $("#employees-value").textContent = state.employees;
 
-  $("#row-payroll").textContent = `$${annualPayroll.toLocaleString()}`;
-  $("#row-rent").textContent = `$${annualRent.toLocaleString()}`;
-  $("#row-costfloor").textContent = `$${costFloor.toLocaleString()}`;
+  $("#row-payroll").textContent = `$${score.annualPayroll.toLocaleString()}`;
+  $("#row-rent").textContent = `$${score.annualRent.toLocaleString()}`;
+  $("#row-costfloor").textContent = `$${score.costFloor.toLocaleString()}`;
   $("#payroll-note").textContent =
     `Payroll uses an ACS-derived average weekly wage ($${Math.round(county.wage).toLocaleString()}/week) adjusted for the labor intensity of your business type. The cost floor adds $18,000 for licensing, insurance and utilities.`;
 
   $("#score-eyebrow").textContent = `FORMATION CLIMATE SCORE · ${county.name.toUpperCase()}`;
   $("#score-number").textContent = score.overall;
-  const badge = $("#score-badge");
-  badge.textContent = v.label;
-  badge.className = `badge ${v.cls}`;
+  const badgeEl = $("#score-badge");
+  if (badgeEl) {
+    badgeEl.textContent = v.label;
+    badgeEl.className = `badge ${v.cls}`;
+  }
   $("#score-note").textContent = v.note;
-  $("#county-note").textContent = county.note;
+
+  $("#score-household").textContent = `${score.household}`;
+  $("#score-labor").textContent = `${score.labor}`;
+  $("#score-market").textContent = `${score.market}`;
+  $("#score-institutional").textContent = `${score.institutional}`;
+  $("#score-stability").textContent = `${score.stability}`;
 
   $("#bar-household").style.width = `${score.household}%`;
   $("#bar-labor").style.width = `${score.labor}%`;
   $("#bar-market").style.width = `${score.market}%`;
   $("#bar-institutional").style.width = `${score.institutional}%`;
   $("#bar-stability").style.width = `${score.stability}%`;
-  $("#val-household").textContent = `${score.household} × 28%`;
-  $("#val-labor").textContent = `${score.labor} × 22%`;
-  $("#val-market").textContent = `${score.market} × 18%`;
-  $("#val-institutional").textContent = `${score.institutional} × 20%`;
-  $("#val-stability").textContent = `${score.stability} × 12%`;
 
-  $("#resources-cta").textContent = `${score.resources} local resources`;
-
-  renderScoreRadarChart($("#radar-chart"), score);
+  const radarCanvas = $("#radar-canvas");
+  if (radarCanvas) {
+    renderScoreRadarChart(radarCanvas, score);
+  }
 }
 
-function renderCounties() {
-  const metric = METRICS.find((m) => m.id === state.metric);
-  const countyIds = Object.keys(COUNTY_FIPS);
-  const rows = countyIds.map((id) => {
-    const c = getCounty(id);
-    return { id, name: c.name.replace(" County", ""), value: c[state.metric] };
-  }).sort((a, b) => a.name.localeCompare(b.name));
+function renderCountyPage() {
+  if (!state.economicData) return;
+  const county = getCounty(state.countyId);
+  const metric = METRICS.find((m) => m.id === state.metric) || METRICS[0];
 
-  const leader = [...rows].sort((a, b) => (metric.lowerIsBetter ? a.value - b.value : b.value - a.value))[0];
+  $("#county-metric-label") && ($("#county-metric-label").textContent = metric.label);
+  $("#county-metric-value") && ($("#county-metric-value").textContent = metric.fmt(county[metric.id]));
 
-  $("#metric-title").textContent = metric.label;
-  $("#metric-leader").innerHTML = `Leading: <strong>${leader.name} County</strong> at ${metric.fmt(leader.value)}`;
-
-  $all(".metric-pill").forEach((btn) => btn.classList.toggle("active", btn.dataset.metric === state.metric));
-
-  renderCountyBarChart($("#bar-chart"), rows.map((r) => r.name), rows.map((r) => r.value), leader.name);
+  const labels = COUNTIES_META.map((c) => c.name.replace(" County", ""));
+  const values = COUNTIES_META.map((c) => {
+    const econ = (state.economicData || FALLBACK_ECONOMIC_DATA)[c.id];
+    return econ ? econ[metric.id] : 0;
+  });
+  const canvas = $("#county-bar-canvas");
+  if (canvas) {
+    renderCountyBarChart(canvas, labels, values, county.name.replace(" County", ""));
+  }
 }
 
-function renderResources() {
+function renderResourcesPage() {
+  const grid = $("#resources-grid");
+  const countEl = $("#resources-count");
+  if (!grid || !countEl) return;
+
   const filtered = RESOURCES.filter((r) => {
     const countyOk = state.filterCounty === "all" || r.county === "all" || r.county === state.filterCounty;
     const typeOk = state.filterType === "Every type" || r.tag === state.filterType;
     return countyOk && typeOk;
   });
 
-  $("#resources-count").textContent = `${filtered.length} ORGANIZATION${filtered.length === 1 ? "" : "S"} FOUND`;
+  countEl.textContent = `${filtered.length} MATCHED RESOURCES`;
+  grid.innerHTML = filtered.map((r) => `
+    <div class="card resource-card">
+      <div class="tag">${r.tag}</div>
+      <h3>${r.name}</h3>
+      <p>${r.desc}</p>
+      <div class="resource-meta">
+        <div>${r.addr}</div>
+        <div>${r.phone}</div>
+      </div>
+      <div class="resource-footer">
+        <span class="small muted">County: ${r.county === "all" ? "Statewide" : COUNTIES_META.find(c => c.id === r.county)?.name || r.county}</span>
+      </div>
+    </div>
+  `).join("");
+}
 
-  const grid = $("#resources-grid");
-  const empty = $("#resources-empty");
-  if (filtered.length === 0) {
-    grid.classList.add("hidden");
-    empty.classList.remove("hidden");
-    return;
+/* ---------------------------- wiring ------------------------------- */
+
+function attachEvents() {
+  $all(".nav-pill").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.page = btn.dataset.page;
+      renderNav();
+      if (state.page === "home") renderHome();
+      if (state.page === "county") renderCountyPage();
+      if (state.page === "resources") renderResourcesPage();
+    });
+  });
+
+  const countySelect = $("#county-select");
+  const businessSelect = $("#business-select");
+  const rentSlider = $("#rent-slider");
+  const employeesSlider = $("#employees-slider");
+
+  if (countySelect) {
+    countySelect.addEventListener("change", (e) => {
+      state.countyId = e.target.value;
+      renderHome();
+      if (state.page === "county") renderCountyPage();
+      if (state.page === "resources") renderResourcesPage();
+    });
   }
-  grid.classList.remove("hidden");
-  empty.classList.add("hidden");
 
-  grid.innerHTML = filtered.map((r) => {
-    const countyLabel = r.county === "all" ? "Statewide" : COUNTIES_META.find((c) => c.id === r.county)?.name;
-    return `
-      <div class="card resource-card">
-        <span class="tag">${r.tag.toUpperCase()}</span>
-        <h3>${r.name}</h3>
-        <p class="muted">${r.desc}</p>
-        <div class="resource-meta">
-          <div>📍 ${r.addr}</div>
-          <div>📞 ${r.phone}</div>
-        </div>
-        <div class="resource-footer">
-          <span class="muted small">${countyLabel}</span>
-          <button class="btn btn-dark btn-sm" type="button">Visit website ↗</button>
-        </div>
-      </div>`;
-  }).join("");
-}
+  if (businessSelect) {
+    businessSelect.addEventListener("change", (e) => {
+      state.businessId = e.target.value;
+      renderHome();
+    });
+  }
 
-function renderAll() {
-  renderNav();
-  renderDataStatusBadge();
-  if (!state.economicData) return; // still loading
-  renderHome();
-  renderCounties();
-  renderResources();
-}
+  if (rentSlider) {
+    rentSlider.addEventListener("input", (e) => {
+      state.rent = Number(e.target.value) || 0;
+      $("#rent-value").textContent = `$${state.rent.toLocaleString()}`;
+      renderHome();
+    });
+  }
 
-/* ----------------------------- wiring ----------------------------------*/
+  if (employeesSlider) {
+    employeesSlider.addEventListener("input", (e) => {
+      state.employees = Number(e.target.value) || 0;
+      $("#employees-value").textContent = state.employees;
+      renderHome();
+    });
+  }
 
-function setPage(page) {
-  state.page = page;
-  renderNav();
-  // Canvas charts can only measure/draw correctly once their section is
-  // visible (display !== none), so re-render whichever chart just became
-  // visible now that its container has real dimensions.
-  if (state.economicData) {
-    if (page === "home") renderHome();
-    if (page === "counties") renderCounties();
+  const metricPills = $all(".metric-pill");
+  metricPills.forEach((pill) => {
+    pill.addEventListener("click", () => {
+      state.metric = pill.dataset.metric;
+      metricPills.forEach((p) => p.classList.toggle("active", p === pill));
+      renderCountyPage();
+    });
+  });
+
+  const filterCountySelect = $("#filter-county");
+  const filterTypeSelect = $("#filter-type");
+  if (filterCountySelect) {
+    filterCountySelect.addEventListener("change", (e) => {
+      state.filterCounty = e.target.value;
+      renderResourcesPage();
+    });
+  }
+  if (filterTypeSelect) {
+    filterTypeSelect.addEventListener("change", (e) => {
+      state.filterType = e.target.value;
+      renderResourcesPage();
+    });
   }
 }
 
-function initStaticUi() {
-  fillSelect($("#county-select"), COUNTIES_META.map((c) => ({ value: c.id, label: c.name })), state.countyId);
-  fillSelect($("#business-select"), BUSINESS_TYPES.map((b) => ({ value: b.id, label: b.name })), state.businessId);
-  fillSelect(
-    $("#filter-county"),
-    [{ value: "all", label: "All of Rhode Island" }, ...COUNTIES_META.map((c) => ({ value: c.id, label: c.name }))],
-    state.filterCounty
-  );
-  fillSelect($("#filter-type"), TYPES_OF_HELP.map((t) => ({ value: t, label: t })), state.filterType);
+/* ---------------------------- boot ------------------------------- */
 
-  $("#metric-pills").innerHTML = METRICS.map(
-    (m) => `<button class="metric-pill" type="button" data-metric="${m.id}">${m.label}</button>`
-  ).join("");
-
-  $all(".nav-pill").forEach((btn) => btn.addEventListener("click", () => setPage(btn.dataset.page)));
-  $("#logo-link").addEventListener("click", () => setPage("home"));
-  $("#run-estimator-link").addEventListener("click", (e) => {
-    e.preventDefault();
-    document.getElementById("plan-card").scrollIntoView({ behavior: "smooth" });
-  });
-  $("#compare-counties-btn").addEventListener("click", () => setPage("counties"));
-  $("#resources-cta").addEventListener("click", () => {
-    state.filterCounty = state.countyId;
-    setPage("resources");
-    renderAll();
-  });
-  $("#compare-counties-btn-2").addEventListener("click", () => setPage("counties"));
-
-  $("#county-select").addEventListener("change", (e) => { state.countyId = e.target.value; renderHome(); });
-  $("#business-select").addEventListener("change", (e) => { state.businessId = e.target.value; renderHome(); });
-  $("#rent-slider").addEventListener("input", (e) => { state.rent = Number(e.target.value); renderHome(); });
-  $("#employees-slider").addEventListener("input", (e) => { state.employees = Number(e.target.value); renderHome(); });
-
-  $("#metric-pills").addEventListener("click", (e) => {
-    const btn = e.target.closest(".metric-pill");
-    if (!btn) return;
-    state.metric = btn.dataset.metric;
-    renderCounties();
-  });
-
-  $("#filter-county").addEventListener("change", (e) => { state.filterCounty = e.target.value; renderResources(); });
-  $("#filter-type").addEventListener("change", (e) => { state.filterType = e.target.value; renderResources(); });
-
-  const mobileToggle = $("#mobile-menu-toggle");
-  const mobileMenu = $("#mobile-menu");
-  mobileToggle.addEventListener("click", () => mobileMenu.classList.toggle("hidden"));
-  $all("#mobile-menu .nav-pill").forEach((btn) =>
-    btn.addEventListener("click", () => mobileMenu.classList.add("hidden"))
-  );
-}
-
-async function init() {
-  initStaticUi();
+async function boot() {
   renderNav();
   renderDataStatusBadge();
 
@@ -825,29 +747,21 @@ async function init() {
     const { records, sources, allLive } = await fetchAllEconomicData();
     state.economicData = records;
     state.dataSources = sources;
-    if (allLive) {
-      state.dataStatus = "live";
-    } else {
-      const anyLive = Object.values(sources).some((fields) => Object.values(fields).some((s) => s === "live"));
-      state.dataStatus = anyLive ? "partial" : "fallback";
-    }
-  } catch (err) {
-    console.error("Live data fetch failed entirely, using fallback dataset:", err);
+    state.dataStatus = allLive ? "live" : "partial";
+  } catch (e) {
+    console.warn("Live data fetch failed, using fallback only:", e);
     state.economicData = FALLBACK_ECONOMIC_DATA;
+    state.dataSources = null;
     state.dataStatus = "fallback";
   }
 
-  renderAll();
+  renderDataStatusBadge();
+  renderHome();
+  renderCountyPage();
+  renderResourcesPage();
 }
 
-document.addEventListener("DOMContentLoaded", init);
-
-let resizeTimer = null;
-window.addEventListener("resize", () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    if (!state.economicData) return;
-    if (state.page === "home") renderHome();
-    if (state.page === "counties") renderCounties();
-  }, 150);
+document.addEventListener("DOMContentLoaded", () => {
+  attachEvents();
+  boot();
 });
