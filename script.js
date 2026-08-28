@@ -638,6 +638,11 @@ function fillSelect(selectEl, options, value) {
   selectEl.innerHTML = options.map((o) => `<option value="${o.value}">${o.label}</option>`).join("");
   selectEl.value = value;
 }
+if (!state.economicData) {
+  $("#score-number").textContent = "--";
+  $("#score-eyebrow").textContent = "Loading data…";
+  return;
+}
 
 function renderHome() {
   const county = getCounty(state.countyId);
