@@ -483,8 +483,9 @@ function computeScore(county, businessType, employees, rent) {
   const occupancyPressure = clamp(occRaw, -10, 55);
 
   const staffingBase = employees - 2;
-  let staffRaw = Math.pow(Math.abs(staffingBase), 1.3) * (staffingBase > 0 ? 1 : -1) * 5;
-  const staffingPressure = clamp(staffRaw, -10, 45);
+let staffRaw = Math.pow(Math.abs(staffingBase), 1.3) * (staffingBase >= 0 ? 1 : -1) * 5;
+const staffingPressure = clamp(staffRaw, -10, 45);
+
 
   const planFit = clamp(100 - occupancyPressure - staffingPressure, 0, 100);
   const labor = Math.round(marketFit * 0.55 + planFit * 0.45);
