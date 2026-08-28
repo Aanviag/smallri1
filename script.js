@@ -478,9 +478,9 @@ function computeScore(county, businessType, employees, rent) {
   const marketFit = clamp(100 - wagePressure - businessTypePressure, 0, 100);
 
   const rentPerHead = annualRent / effectiveHeadcount;
-  const occBase = (rentPerHead - 8000) / 250;
-  let occRaw = Math.pow(Math.abs(occBase), 1.25) * (occBase < 0 ? -1 : 1) - 10;
-  const occupancyPressure = clamp(occRaw, -10, 55);
+const occBase = (rentPerHead - 8000) / 250;
+let occRaw = Math.pow(Math.abs(occBase), 1.25) * (occBase < 0 ? -1 : 1) - 10;
+const occupancyPressure = clamp(occRaw, -10, 55);
 
   const staffingBase = employees - 2;
 let staffRaw = Math.pow(Math.abs(staffingBase), 1.3) * (staffingBase >= 0 ? 1 : -1) * 5;
