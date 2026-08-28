@@ -578,7 +578,7 @@ const household = Math.round(incomeScore * 0.75 + growthScore * 0.25);
 
   const effectiveHeadcount = Math.max(employees, 1);
   const rentPerHead = annualRent / effectiveHeadcount;
-  const occupancyPressure = clamp(Math.pow((rentPerHead - 8000) / 250, 1.25) -10,0,55);
+  const occupancyPressure = clamp((rentPerHead - 9000) / 300, -20, 60);
   const staffingPressure = clamp(Math.pow(employees - 2, 1.3) * 5, -10, 45);
   const planFit = clamp(100 - occupancyPressure - staffingPressure, 0, 100);
 
